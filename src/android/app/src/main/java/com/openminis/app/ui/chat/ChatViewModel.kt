@@ -14414,6 +14414,10 @@ class ChatViewModel(
                     )
                 }
             "memory_get" -> executeMemoryGetTool(argsJson)
+            // [T-pojia-kb] Local knowledge base — pure read-only lookup, no
+            // user permission prompt, no network. Data ships in assets.
+            "kb_search", "kb_read", "kb_list", "kb_cats" ->
+                com.openminis.app.tools.KbTools.execute(toolName, argsJson, toolId, context.applicationContext)
             // [T-port-user-ask] Card in the chat, then wait for the user.
             // [T-user-ask-exposure-guard] A run that does not offer the tool (the
             // setting is off, a helper / sub agent, a scheduled or other headless

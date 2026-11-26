@@ -27,7 +27,7 @@ object AssetBootstrap {
     fun extractIfNeeded(context: Context) {
         val targets = listOf(
             Target("toolchain", File("/var/minis/toolchain"), asZip = false),
-            Target(File("/var/minis/builtin_plugins"), asZip = false),
+            Target("builtin_plugins", File("/var/minis/builtin_plugins"), asZip = false),
             Target("lustforge-full.zip", File("/var/minis/lustforge"), asZip = true),
         )
         for (t in targets) {

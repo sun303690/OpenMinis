@@ -67,6 +67,12 @@ object AgentTools {
             add(subAgentTaskDefinition(rosterNames))
         }
         if (userAskExposed && !isHelper) add(com.openminis.app.agent.userask.UserAskPromptText.definition())
+        // [T-pojia-kb] Local knowledge base tools. Always present in this
+        // build: the data ships in assets/bundled_skills/pojia-kb/kb.json, so
+        // kb_search/kb_read/kb_list/kb_cats work even before the skill is
+        // installed to /var/minis. Helpers also get them — read-only lookup
+        // is exactly what a helper needs.
+        addAll(KbTools.toolDefs())
     }
 
     /**
