@@ -194,6 +194,7 @@ def cmd_patch(so, addr, hexbytes, out=None):
     got = bytes(v.get_content_from_virtual_address(a, len(raw)))
     ok = got == raw
     print(f"  校验: {'OK' if ok else 'FAIL'} (实际 {got.hex()})")
+    sess_adopt(dest, "patch", f"0x{a:x} {hexbytes}")
     return dest
 
 
@@ -211,6 +212,7 @@ def cmd_symrename(so, old, new, out=None):
     dest = out or (so.rsplit(".", 1)[0] + ".renamed.so")
     b.write(dest)
     print(f"重命名 {n} 处 {old} -> {new} -> {dest}")
+    sess_adopt(dest, "symrename", f"{old} -> {new}")
 
 
 # ---------------- 编辑会话 ----------------
@@ -239,6 +241,37 @@ def sess_save(d, st):
 def sess_log(d, st, action, detail=""):
     st["audit"].append({"t": time.strftime("%H:%M:%S"), "action": action, "detail": detail})
     sess_save(d, st)
+
+
+def sess_adopt(path, action, detail):
+    """把一次编辑的产物并入已有会话：追加快照并记 audit。
+
+    之前 patch/symrename 只写 xxx.patched.so，会话里 anchor 永远停在 base，
+    undo/rollback 实际回不到任何一次编辑。这里让编辑变成会话历史的一步。
+    """
+    if not os.path.isdir(SESSION_ROOT):
+        return None
+    tgt = os.path.abspath(path)
+    for cand in sorted(os.listdir(SESSION_ROOT)):
+        d = os.path.join(SESSION_ROOT, cand)
+        if not os.path.isdir(d) or not os.path.exists(os.path.join(d, "state.json")):
+            continue
+        st = sess_state(d)
+        base = st.get("target")
+        if not base:
+            continue
+        stem = os.path.splitext(base)[0]
+        if base != tgt and not tgt.startswith(stem):
+            continue
+        name = f"snap{len(st['snaps'])}.bin"
+        st["snaps"] = st["snaps"][: st["cursor"] + 1]
+        shutil.copy2(path, os.path.join(d, "snaps", name))
+        st["snaps"].append({"label": f"{action} {detail}", "file": f"snaps/{name}"})
+        st["cursor"] = len(st["snaps"]) - 1
+        sess_log(d, st, action, detail)
+        print(f"  已并入会话 #{st['cursor']} ({action})")
+        return d
+    return None
 
 
 def do_session(argv):
