@@ -16,18 +16,82 @@
   patch     <so> <addr> <hexbytes> [-o out]   地址补丁
   symrename <so> <old> <new> [-o out]  符号改名
   session   <cmd> ...                  编辑会话: init/snap/undo/redo/rollback/check/audit/persist
+  cache     [--purge]                  查看/清理分析缓存
+
+全局开关 (任意位置):
+  --fast     分析级别降为 aa（快，函数会少）
+  --deep     分析级别升为 aaaa（最慢，实验性）
+  --no-cache 不读也不写分析缓存
+
+分析结果按 (路径, 大小, mtime, 级别) 缓存在 ~/.soforge_projects，
+同一份 so 的后续命令直接 Po 载入，不再重跑 aaa。
 """
 import sys, os, subprocess, json, struct, hashlib, shutil, time
 
 R2 = shutil.which("r2") or "/usr/bin/r2"
 
+# 分析深度：aa（快）/ aaa（默认，函数+调用+引用）/ aaaa（最慢）
+# 未显式指定时按体积自动降级 —— aaa 在 11MB 的 libjvm.so 上要 2m47s，
+# 60MB 级的 so 会到十几分钟，默认值不能是它。
+ANALYSIS = os.environ.get("SOFORGE_ANALYSIS") or None
+AUTO_THRESHOLD = int(os.environ.get("SOFORGE_AUTO_MB", "4")) * 1024 * 1024
+PROJ_ROOT = os.environ.get("SOFORGE_PROJ_ROOT") or "/var/minis/workspace/.soforge_projects"
+PROJ_MAX = int(os.environ.get("SOFORGE_PROJ_MAX", str(256 * 1024 * 1024)))
+USE_CACHE = True
+R2_TIMEOUT = int(os.environ.get("SOFORGE_TIMEOUT", "900"))
 
-def r2(so, cmds, extra_args=None):
+
+def analysis_for(so):
+    """显式设置优先；否则小文件 aaa、大文件 aa（大文件 aaa 慢到不可用）。"""
+    if ANALYSIS:
+        return ANALYSIS
+    try:
+        sz = os.path.getsize(so)
+    except OSError:
+        return "aa"
+    if sz <= AUTO_THRESHOLD:
+        return "aaa"
+    print(f"[i] {sz / 1048576:.1f}MB ≥ {AUTO_THRESHOLD // 1048576}MB，分析级别降为 aa（--deep 可强制加深度）",
+          file=sys.stderr)
+    return "aa"
+
+
+def proj_path(so):
+    """分析结果缓存路径。键含路径/大小/mtime/分析级别，改过的 so 自动换键。"""
+    st = os.stat(so)
+    raw = f"{os.path.abspath(so)}|{st.st_size}|{int(st.st_mtime)}|{analysis_for(so)}"
+    key = hashlib.sha1(raw.encode()).hexdigest()[:16]
+    return os.path.join(PROJ_ROOT, key + ".r2p")
+
+
+def _pre_cmds(so):
+    """前置命令：命中缓存用 Po 恢复，否则跑分析并 Ps 落盘。"""
+    lvl = analysis_for(so)
+    if not USE_CACHE:
+        return lvl + "; ", None
+    try:
+        path = proj_path(so)
+        if os.path.exists(path) and os.path.getsize(path) > 1024:
+            return f"Po {path}; ", path
+        os.makedirs(PROJ_ROOT, exist_ok=True)
+        return f"{lvl}; Ps {path}; ", path
+    except OSError:
+        return lvl + "; ", None
+
+
+def r2(so, cmds, extra_args=None, no_analysis=False):
     args = [R2, "-q", "-e", "bin.relocs.apply=true"]
     if extra_args:
         args += extra_args
-    args += ["-c", cmds, so]
-    p = subprocess.run(args, capture_output=True, text=True, timeout=600)
+    pre, path = ("", None) if no_analysis else _pre_cmds(so)
+    args += ["-c", pre + cmds, so]
+    p = subprocess.run(args, capture_output=True, text=True, timeout=R2_TIMEOUT)
+    if path and os.path.exists(path) and os.path.getsize(path) > PROJ_MAX:
+        try:
+            os.remove(path)
+            print(f"[i] 分析缓存 > {PROJ_MAX // 1048576}MB 已丢弃", file=sys.stderr)
+        except OSError:
+            pass
     out = p.stdout
     # r2 5.9.8 在 Alpine 上有 config 断言噪声，过滤掉
     lines = [l for l in out.splitlines()
@@ -35,8 +99,8 @@ def r2(so, cmds, extra_args=None):
     return "\n".join(lines)
 
 
-def r2j(so, cmds):
-    txt = r2(so, cmds)
+def r2j(so, cmds, no_analysis=False):
+    txt = r2(so, cmds, no_analysis=no_analysis)
     txt = txt.strip()
     if not txt:
         return None
@@ -52,7 +116,7 @@ def r2j(so, cmds):
 
 def cmd_analyze(so):
     print(f"=== {so} ===")
-    info = r2j(so, "ij") or {}
+    info = r2j(so, "ij", no_analysis=True) or {}
     c = info.get("bin", {}).get("class", "?")
     arch = info.get("bin", {}).get("arch", "?")
     bits = info.get("bin", {}).get("bits", "?")
@@ -62,18 +126,18 @@ def cmd_analyze(so):
     print(f"大小: {os.path.getsize(so):,} bytes")
 
     # section 概况
-    sec = r2j(so, "iSj") or []
+    sec = r2j(so, "iSj", no_analysis=True) or []
     exec_secs = [s for s in sec if "x" in s.get("perm", "")]
     print(f"section: {len(sec)} (可执行 {len(exec_secs)}: {', '.join(s['name'] for s in exec_secs)})")
 
     # 依赖
-    libs = r2j(so, "ilj") or []
+    libs = r2j(so, "ilj", no_analysis=True) or []
     if libs:
         names = [l if isinstance(l, str) else l.get("name", "") for l in libs]
         print(f"依赖: {', '.join(n for n in names if n)}")
 
     # 函数
-    funcs = r2j(so, "aa; aflj") or []
+    funcs = r2j(so, "aflj") or []
     print(f"函数: {len(funcs)}")
 
     # 加密常量
@@ -111,7 +175,7 @@ def crypto_scan(so):
 
 
 def cmd_funcs(so, min_size=0):
-    funcs = r2j(so, "aa; aflj") or []
+    funcs = r2j(so, "aflj") or []
     funcs = [f for f in funcs if f.get("size", 0) >= min_size]
     funcs.sort(key=lambda f: f.get("offset", 0))
     print(f"{'offset':>12} {'size':>6} {'bbs':>4}  name")
@@ -122,9 +186,9 @@ def cmd_funcs(so, min_size=0):
 
 def cmd_cfg(so, target, dot=False):
     if dot:
-        print(r2(so, f"aa; s {target}; agfd"))
+        print(r2(so, f"s {target}; agfd"))
     else:
-        g = r2j(so, f"aa; s {target}; agfj")
+        g = r2j(so, f"s {target}; agfj")
         if not g:
             print("未找到函数", target)
             return
@@ -137,16 +201,16 @@ def cmd_cfg(so, target, dot=False):
 
 
 def cmd_xref(so, target):
-    out = r2(so, f"aa; axt {target}")
+    out = r2(so, f"axt {target}")
     print(out or "无引用")
 
 
 def cmd_disasm(so, target, n=40):
-    print(r2(so, f"aa; s {target}; pd {n}"))
+    print(r2(so, f"s {target}; pd {n}"))
 
 
 def cmd_decompile(so, target):
-    print(r2(so, f"aa; s {target}; pdd"))
+    print(r2(so, f"s {target}; pdd"))
 
 
 def cmd_strings(so, regex=None):
@@ -169,7 +233,7 @@ def cmd_esil(so, addr, n=10):
 
 
 def cmd_sections(so):
-    secs = r2j(so, "iSj") or []
+    secs = r2j(so, "iSj", no_analysis=True) or []
     print(f"{'name':24} {'addr':>12} {'vsize':>10} {'perm':>5}")
     for s in secs:
         print(f"{s.get('name',''):24} {s.get('vaddr',0):>12x} {s.get('vsize',0):>10} {s.get('perm','')}")
@@ -363,16 +427,49 @@ def do_session(argv):
         print(__doc__)
 
 
+def cmd_cache(argv):
+    if not os.path.isdir(PROJ_ROOT):
+        print("缓存目录不存在（还没有跑过分析）")
+        return
+    files = [os.path.join(PROJ_ROOT, f) for f in os.listdir(PROJ_ROOT) if f.endswith(".r2p")]
+    if "--purge" in argv:
+        n = 0
+        for f in files:
+            try:
+                os.remove(f)
+                n += 1
+            except OSError:
+                pass
+        print(f"已清理 {n} 个分析缓存")
+        return
+    total = sum(os.path.getsize(f) for f in files)
+    print(f"分析缓存: {len(files)} 项 / {total / 1048576:.1f} MB @ {PROJ_ROOT}")
+    for f in sorted(files, key=os.path.getsize, reverse=True)[:10]:
+        print(f"  {os.path.getsize(f) / 1048576:>7.1f} MB  {os.path.basename(f)}")
+    print(f"当前分析级别: {ANALYSIS or f'auto (≤{AUTO_THRESHOLD // 1048576}MB: aaa, 之上: aa)'}")
+
+
 def main():
-    if len(sys.argv) < 3:
+    global ANALYSIS, USE_CACHE
+    argv = [a for a in sys.argv[1:] if a not in ("--fast", "--deep", "--no-cache")]
+    if "--fast" in sys.argv[1:]:
+        ANALYSIS = "aa"
+    if "--deep" in sys.argv[1:]:
+        ANALYSIS = "aaaa"
+    if "--no-cache" in sys.argv[1:]:
+        USE_CACHE = False
+    if argv and argv[0] == "cache":
+        cmd_cache(argv[1:])
+        return
+    if len(argv) < 2:
         print(__doc__)
         sys.exit(2)
-    cmd = sys.argv[1]
+    cmd = argv[0]
     if cmd == "session":
-        do_session(sys.argv[2:])
+        do_session(argv[1:])
         return
-    so = sys.argv[2]
-    rest = sys.argv[3:]
+    so = argv[1]
+    rest = argv[2:]
 
     def opt(flag, default=None):
         if flag in rest:
