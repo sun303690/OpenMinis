@@ -717,6 +717,16 @@ object PRootKernel {
         cmd.add("-b")
         cmd.add("/sys")
 
+        // Bind host /system into the sandbox. The Android dynamic linker at
+        // /system/bin/linker64 is required to execute Android-NDK-built
+        // binaries (Termux JDK17, cpython, native payload binaries) inside
+        // the guest: their PT_INTERP points at the absolute host path.
+        // Binding is read-only in practice — guest writes under /system are
+        // still rejected by the kernel because /system is a read-only mount
+        // on modern Android.
+        cmd.add("-b")
+        cmd.add("/system")
+
         // Working directory
         cmd.add("-w")
         cmd.add("/root")

@@ -46,7 +46,7 @@ class SkillRepository(private val context: Context) {
         private const val TAG = "SkillRepository"
         private const val DB_NAME = "skills.db"
         private const val DB_VERSION = 3
-        private const val MAX_SKILLS_IN_PROMPT = 20
+        private const val MAX_SKILLS_IN_PROMPT = 50
         private const val MAX_SKILL_DESC_LENGTH = 200
         private const val RECENT_WINDOW_MS = 7L * 24 * 3600 * 1000
         private const val RECENT_SLOTS = 10

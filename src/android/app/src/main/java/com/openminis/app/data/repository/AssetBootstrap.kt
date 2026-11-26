@@ -50,8 +50,30 @@ object AssetBootstrap {
         } else {
             copyTree(context, t.asset, t.dest)
         }
+        // Toolchain payloads ship as .tgz/.targz archives (jdk17.tgz,
+        // cpython.targz, npm.tgz). Extract them in place and drop the
+        // archive, so guest binaries land at /var/minis/toolchain/<name>/...
+        // and double storage is not wasted on both archive and tree.
+        if (t.asset == "toolchain") extractArchives(t.dest)
         marker.writeText("ok")
         Log.i(TAG, "extracted ${t.asset} -> ${t.dest}")
+    }
+
+    private fun extractArchives(dir: File) {
+        val archives = dir.listFiles { f -> f.isFile && f.extension.lowercase() in setOf("tgz", "targz") } ?: return
+        for (archive in archives) {
+            runCatching {
+                val proc = ProcessBuilder("tar", "xzf", archive.absolutePath, "-C", dir.absolutePath)
+                    .redirectErrorStream(true).start()
+                val rc = proc.waitFor()
+                if (rc == 0) {
+                    archive.delete()
+                    Log.i(TAG, "extracted ${archive.name} -> ${dir.name}/")
+                } else {
+                    Log.w(TAG, "tar ${archive.name} rc=$rc: ${proc.inputStream.bufferedReader().readText().take(200)}")
+                }
+            }.onFailure { Log.w(TAG, "tar ${archive.name} failed: ${it.message}") }
+        }
     }
 
     private fun copyTree(context: Context, assetPath: String, dest: File) {
