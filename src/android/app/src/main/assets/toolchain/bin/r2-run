@@ -1,0 +1,32 @@
+#!/bin/sh
+# r2-run — 统一入口：设置好 LD_LIBRARY_PATH / R2_PREFIX 后调用指定 r2 工具。
+# 用法: r2-run <tool> [args...]   例: r2-run radare2 -q -c 'aa; afl' x.so
+#
+# 沙箱内的 r2 完整树放在 /var/minis/toolchain/r2/：
+#   r2/bin/*        radare2 rabin2 rasm2 rahash2 ...
+#   r2/lib/*        libr_*.so + capstone/zip/magic/lz4/zstd/xxhash/lzma/bz2
+#   r2/share/*      format / fcnsign / syscall / opcodes / charsets / magic
+#   r2/lib/radare2/5.9.8/libcore_pdd.so   r2dec 反编译插件
+TC=/var/minis/toolchain
+R2ROOT="$TC/r2"
+
+if [ $# -lt 1 ]; then
+    echo "usage: r2-run <radare2|rabin2|rasm2|rahash2|...> [args...]" >&2
+    exit 2
+fi
+
+TOOL="$1"
+shift
+
+if [ ! -x "$R2ROOT/bin/$TOOL" ]; then
+    # 没解包成功时退回系统安装的 r2（用户自己 apk add 过）
+    if command -v "$TOOL" >/dev/null 2>&1; then
+        exec "$TOOL" "$@"
+    fi
+    echo "r2-run: '$TOOL' not found at $R2ROOT/bin (toolchain extraction failed?)" >&2
+    exit 127
+fi
+
+export R2_PREFIX="$R2ROOT"
+export LD_LIBRARY_PATH="$R2ROOT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$R2ROOT/bin/$TOOL" "$@"

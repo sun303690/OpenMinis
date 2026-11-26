@@ -43,10 +43,10 @@ object AssetBootstrap {
     private data class Target(val asset: String, val dest: File, val asZip: Boolean = false)
 
     private fun extract(context: Context, t: Target) {
-        // v2: the toolchain payload gained bin/ wrappers (apktool/cfr/dex2jar)
-        // and jdk17 shims. Bumping the marker suffix re-runs the (idempotent,
-        // overwrite-safe) copy once for devices that already extracted v1.
-        val markerSuffix = if (t.asset == "toolchain") ".extracted.v2" else ".extracted"
+        // v3: the toolchain payload added r2.tgz (radare2 5.9.8 + r2dec) and
+        // bin/ wrappers. Bumping the marker suffix re-runs the (idempotent,
+        // overwrite-safe) copy once for devices that already extracted v1/v2.
+        val markerSuffix = if (t.asset == "toolchain") ".extracted.v3" else ".extracted"
         val marker = File(t.dest.parentFile, ".${t.dest.name}$markerSuffix")
         if (marker.exists() && t.dest.exists()) return
         if (runCatching { context.assets.list(t.asset)?.isNotEmpty() }.getOrNull() == false) return
@@ -148,21 +148,25 @@ object AssetBootstrap {
         }
         Log.i(TAG, "JDK shims installed into jdk17/lib + jdk17/bin (${shimFiles.size} .so)")
         // The wrapper scripts under toolchain/bin (apktool / cfr / dex2jar /
-        // apk2java) are plain asset copies — CopyTo does not preserve the tar
-        // mode, so mark them executable here or PATH lookups fail with
-        // "Permission denied". jdk17/bin/java already carries its exec bit
-        // from the tar reader.
-        val binDir = File(toolchainDir, "bin")
-        if (binDir.isDirectory) {
-            var n = 0
+        // apk2java / r2 / soforge) are plain asset copies — CopyTo does not
+        // preserve the tar mode, so mark them executable here or PATH lookups
+        // fail with "Permission denied". jdk17/bin/java and the extracted
+        // radare2 tools already carry their exec bit from the tar reader, but
+        // r2/bin is re-chmodded anyway because a partially extracted archive
+        // can leave them non-executable.
+        var chmodded = 0
+        for (binPath in listOf("bin", "r2/bin", "jdk17/bin")) {
+            val binDir = File(toolchainDir, binPath)
+            if (!binDir.isDirectory) continue
             binDir.listFiles()?.forEach { f ->
-                if (f.isFile && f.setExecutable(true, false)) n++
+                if (f.isFile && f.setExecutable(true, false)) chmodded++
             }
-            if (n > 0) Log.i(TAG, "chmod +x toolchain/bin ($n script(s))")
         }
+        if (chmodded > 0) Log.i(TAG, "chmod +x toolchain bins ($chmodded file(s))")
     }
 
-    private fun unzipTo(input: InputStream, dest: File) {        java.util.zip.ZipInputStream(input.buffered()).use { zip ->
+    private fun unzipTo(input: InputStream, dest: File) {
+        java.util.zip.ZipInputStream(input.buffered()).use { zip ->
             val root = dest.canonicalPath
             var entry = zip.nextEntry
             while (entry != null) {

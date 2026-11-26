@@ -1,0 +1,22 @@
+#!/bin/sh
+# soforge — ELF/SO 逆向工作台（r2 反编译/CFG/xref + LIEF 重建 + 编辑会话）
+# 自带 PYTHONPATH 指向 toolchain 内的 lief，无需 pip 安装。
+TC=/var/minis/toolchain
+
+# r2 二进制入口
+PATH="$TC/bin:$TC/r2/bin:$PATH"; export PATH
+# r2 插件 / 数据目录
+R2_PREFIX="$TC/r2"; export R2_PREFIX
+LD_LIBRARY_PATH="$TC/r2/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH
+# LIEF（wheel 解包后的纯目录）
+PYTHONPATH="$TC/pylib${PYTHONPATH:+:$PYTHONPATH}"; export PYTHONPATH
+HOME="${HOME:-/root}"; export HOME
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "soforge: python3 not found in the sandbox." >&2
+    echo "  装一次即可: apk add python3" >&2
+    echo "  (纯 r2 的功能不依赖 python，可直接用 r2 / rabin2 / rasm2)" >&2
+    exit 127
+fi
+
+exec python3 "$TC/bin/soforge.py" "$@"
