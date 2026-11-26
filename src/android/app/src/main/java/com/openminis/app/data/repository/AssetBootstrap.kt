@@ -40,7 +40,7 @@ object AssetBootstrap {
         }
     }
 
-    private data class Target(val asset: String, val dest: File, val asZip = false)
+    private data class Target(val asset: String, val dest: File, val asZip: Boolean = false)
 
     private fun extract(context: Context, t: Target) {
         val marker = File(t.dest.parentFile, ".${t.dest.name}.extracted")
