@@ -38,3 +38,22 @@ jobs:
           name: minis-1.15.14-release
           path: src/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: always() && hashFiles('src/android/app/build/outputs/apk/**/*.apk') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TAG="custom-$(date +%Y%m%d-%H%M%S)"
+          APK=$(find src/android/app/build/outputs/apk -name '*.apk' | head -1)
+          cp "$APK" /tmp/minis-custom.apk
+          gh release create "$TAG" /tmp/minis-custom.apk \
+            --title "Minis 1.15.14 custom ($TAG)" \
+            --notes "Build from ${GITHUB_REF_NAME} @ ${GITHUB_SHA:0:7}. Prebuilt proot/rootfs/rclone + bundled skills, toolchain, plugins." \
+            --prerelease
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Show release URL
+        if: env.RELEASE_TAG != ''
+        run: echo "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
