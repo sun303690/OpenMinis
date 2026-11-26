@@ -1,0 +1,69 @@
+{
+  "id": "com.xctzai.pojia",
+  "name": "破甲",
+  "description": "破甲：本地 CVE/攻防知识库（8 个分类、108 条），带关键词检索与全文读取工具。全部离线，不联网、不读盘。",
+  "version": "1.0.0",
+  "author": "破甲",
+  "icon": "🌠",
+  "entry": "main.js",
+  "tools": [
+    {
+      "name": "kb_search",
+      "description": "在破甲知识库里做关键词检索，返回最相关的条目摘要。英文按词、中文按二元组匹配，标题与 CVE 编号权重更高。不传 query 时返回分类概览。",
+      "parameters": [
+        {
+          "name": "query",
+          "type": "string",
+          "description": "关键词，可以是 CVE 编号（cve-2021-44228）、组件名（nacos、exchange）、或中文描述（越权、反序列化、提权）",
+          "required": true
+        },
+        {
+          "name": "category",
+          "type": "string",
+          "description": "限定分类：web-cms / java-web / java-deser / exchange-ad / edge-device / cloud-container / linux-priv / triage",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "description": "返回条数，默认 8，上限 20",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "kb_read",
+      "description": "按 category + id 读取知识库里某一条的完整内容（含判定标准与验证方式）。id 从 kb_search / kb_list 的返回里取。",
+      "parameters": [
+        {
+          "name": "category",
+          "type": "string",
+          "description": "分类名，如 java-deser",
+          "required": true
+        },
+        {
+          "name": "id",
+          "type": "string",
+          "description": "条目 id，如 cve-2021-44228-log4shell",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "kb_list",
+      "description": "列出知识库目录。只传空参数时列出所有分类及条目数；传 category 时列出该分类下的全部条目名。",
+      "parameters": [
+        {
+          "name": "category",
+          "type": "string",
+          "description": "分类名，留空则列出分类",
+          "required": false
+        }
+      ]
+    }
+  ],
+  "config": [],
+  "allowedHosts": [],
+  "detailCard": "detail_card",
+  "systemPrompt": "file:prompts/persona.md"
+}

