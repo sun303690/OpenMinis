@@ -60,7 +60,7 @@ jobs:
           path: ${{ runner.temp }}/jadx-1.5.1.zip
           key: jadx-1.5.1-zip
 
-      - name: Provide jadx 1.5.1 (full build) to toolchain
+      - name: Provide jadx 1.5.1 (slim build, GUI stripped) to toolchain
         run: |
           set -euo pipefail
           DEST=src/android/app/src/main/assets/toolchain/jars
@@ -74,7 +74,8 @@ jobs:
           rm -rf "$RUNNER_TEMP/jadx"
           mkdir -p "$RUNNER_TEMP/jadx" "$DEST"
           unzip -oq "$ZIP" 'lib/jadx-1.5.1-all.jar' -d "$RUNNER_TEMP/jadx"
-          cp "$RUNNER_TEMP/jadx/lib/jadx-1.5.1-all.jar" "$JAR"
+          python3 .github/scripts/slim_jadx.py \
+            "$RUNNER_TEMP/jadx/lib/jadx-1.5.1-all.jar" "$JAR"
           ls -lh "$JAR"
           unzip -l "$JAR" jadx/cli/JadxCLI.class
 

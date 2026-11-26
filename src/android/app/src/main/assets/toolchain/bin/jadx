@@ -1,8 +1,12 @@
 #!/bin/sh
-# jadx 1.5.1 (full upstream build) — decompile APK / DEX / JAR to Java sources.
+# jadx 1.5.1 — decompile APK / DEX / JAR to Java sources.
 #   jadx -d out app.apk
 #   jadx -d out --no-res app.apk     (skip resources: faster)
-# GUI (jadx-gui) is not usable headless; everything else is the upstream build.
+#
+# The jar is the upstream all-in-one build with GUI-only payload stripped at
+# build time (see .github/scripts/slim_jadx.py): jadx/gui, FlatLaf, RSyntaxTextArea,
+# bundletool and the API-level database are gone — CLI behaviour is unchanged.
+# jadx-gui therefore does not exist here; use jadx on the command line.
 TC=/var/minis/toolchain
 JAR="$TC/jars/jadx-1.5.1-all.jar"
 if [ ! -f "$JAR" ]; then
