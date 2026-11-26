@@ -2,15 +2,18 @@ package com.openminis.app.data.repository
 
 import android.content.Context
 import android.util.Log
+import com.openminis.app.sandbox.RootfsManager
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.util.zip.GZIPInputStream
 
 /**
  * One-shot extraction of build-time payloads shipped under `assets/`.
  *
  * Minis's sandbox (/var/minis) is where skills, plugins and the agent's shell
  * actually look for files, so a resource that is only inside the APK is not
- * usable by them. This copies two classes of payload on first launch:
+ * usable by them. This copies three classes of payload on first launch:
  *
  *   assets/toolchain/           -> /var/minis/toolchain/
  *   assets/builtin_plugins/     -> /var/minis/builtin_plugins/
@@ -37,7 +40,7 @@ object AssetBootstrap {
         }
     }
 
-    private data class Target(val asset: String, val dest: File, val asZip: Boolean)
+    private data class Target(val asset: String, val dest: File, val asZip = false)
 
     private fun extract(context: Context, t: Target) {
         val marker = File(t.dest.parentFile, ".${t.dest.name}.extracted")
@@ -51,29 +54,45 @@ object AssetBootstrap {
             copyTree(context, t.asset, t.dest)
         }
         // Toolchain payloads ship as .tgz/.targz archives (jdk17.tgz,
-        // cpython.targz, npm.tgz). Extract them in place and drop the
-        // archive, so guest binaries land at /var/minis/toolchain/<name>/...
-        // and double storage is not wasted on both archive and tree.
-        if (t.asset == "toolchain") extractArchives(t.dest)
+        // cpython.targz, npm.tgz). Extract in place using RootfsManager's
+        // pure-Kotlin POSIX tar reader instead of ProcessBuilder("tar"):
+        // the app process has no guaranteed `tar` in its PATH on Android.
+        // Delete each archive only after a successful extraction, and write
+        // the marker only when ALL archives succeeded, so a failure is retried
+        // on the next launch instead of being permanently skipped.
+        if (t.asset == "toolchain") {
+            if (!extractArchives(context, t.dest)) {
+                Log.w(TAG, "toolchain archive extraction incomplete; marker not written")
+                return
+            }
+        }
         marker.writeText("ok")
         Log.i(TAG, "extracted ${t.asset} -> ${t.dest}")
     }
 
-    private fun extractArchives(dir: File) {
-        val archives = dir.listFiles { f -> f.isFile && f.extension.lowercase() in setOf("tgz", "targz") } ?: return
+    /** Returns true when every archive was extracted (or none were present). */
+    private fun extractArchives(context: Context, dir: File): Boolean {
+        val archives = dir.listFiles { f ->
+            f.isFile && f.extension.lowercase() in setOf("tgz", "targz")
+        } ?: return true
+        if (archives.isEmpty()) return true
+
+        val tar = RootfsManager.getInstance(context)
+        var allOk = true
         for (archive in archives) {
-            runCatching {
-                val proc = ProcessBuilder("tar", "xzf", archive.absolutePath, "-C", dir.absolutePath)
-                    .redirectErrorStream(true).start()
-                val rc = proc.waitFor()
-                if (rc == 0) {
-                    archive.delete()
-                    Log.i(TAG, "extracted ${archive.name} -> ${dir.name}/")
-                } else {
-                    Log.w(TAG, "tar ${archive.name} rc=$rc: ${proc.inputStream.bufferedReader().readText().take(200)}")
+            val ok = runCatching {
+                GZIPInputStream(archive.inputStream().buffered()).use { gz ->
+                    tar.extractTar(gz, dir)
                 }
-            }.onFailure { Log.w(TAG, "tar ${archive.name} failed: ${it.message}") }
+                archive.delete()
+                Log.i(TAG, "extracted ${archive.name} -> ${dir.name}/")
+            }.isSuccess
+            if (!ok) {
+                allOk = false
+                Log.w(TAG, "failed to extract ${archive.name}; leaving archive for retry")
+            }
         }
+        return allOk
     }
 
     private fun copyTree(context: Context, assetPath: String, dest: File) {
@@ -91,13 +110,12 @@ object AssetBootstrap {
         }.onFailure { Log.w(TAG, "copy $assetPath skipped: ${it.message}") }
     }
 
-    private fun unzipTo(input: java.io.InputStream, dest: File) {
+    private fun unzipTo(input: InputStream, dest: File) {
         java.util.zip.ZipInputStream(input.buffered()).use { zip ->
             val root = dest.canonicalPath
             var entry = zip.nextEntry
             while (entry != null) {
                 val out = File(dest, entry.name)
-                // Zip-slip guard.
                 if (out.canonicalPath.startsWith(root + File.separator)) {
                     if (entry.isDirectory) out.mkdirs()
                     else {
