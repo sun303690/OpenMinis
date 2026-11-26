@@ -54,6 +54,30 @@ jobs:
           yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
           yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;28.2.13676358" "cmake;3.22.1" "platforms;android-36" "build-tools;35.0.0" > /dev/null
 
+      - name: Cache jadx 1.5.1 archive
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/jadx-1.5.1.zip
+          key: jadx-1.5.1-zip
+
+      - name: Provide jadx 1.5.1 (full build) to toolchain
+        run: |
+          set -euo pipefail
+          DEST=src/android/app/src/main/assets/toolchain/jars
+          JAR="$DEST/jadx-1.5.1-all.jar"
+          if [ -f "$JAR" ]; then echo "jadx jar already present"; exit 0; fi
+          ZIP="$RUNNER_TEMP/jadx-1.5.1.zip"
+          if [ ! -s "$ZIP" ]; then
+            curl -sSL --retry 3 --retry-delay 2 -o "$ZIP" \
+              https://github.com/skylot/jadx/releases/download/v1.5.1/jadx-1.5.1.zip
+          fi
+          rm -rf "$RUNNER_TEMP/jadx"
+          mkdir -p "$RUNNER_TEMP/jadx" "$DEST"
+          unzip -oq "$ZIP" 'lib/jadx-1.5.1-all.jar' -d "$RUNNER_TEMP/jadx"
+          cp "$RUNNER_TEMP/jadx/lib/jadx-1.5.1-all.jar" "$JAR"
+          ls -lh "$JAR"
+          unzip -l "$JAR" jadx/cli/JadxCLI.class
+
       - name: Build APK (uses resources already present in the source tree)
         working-directory: src/android
         env:

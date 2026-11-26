@@ -1,0 +1,12 @@
+#!/bin/sh
+# jadx 1.5.1 (full upstream build) — decompile APK / DEX / JAR to Java sources.
+#   jadx -d out app.apk
+#   jadx -d out --no-res app.apk     (skip resources: faster)
+# GUI (jadx-gui) is not usable headless; everything else is the upstream build.
+TC=/var/minis/toolchain
+JAR="$TC/jars/jadx-1.5.1-all.jar"
+if [ ! -f "$JAR" ]; then
+    echo "jadx: missing $JAR" >&2
+    exit 3
+fi
+exec java -Xmx2560m -cp "$JAR" jadx.cli.JadxCLI "$@"
