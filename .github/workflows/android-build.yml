@@ -10,6 +10,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Bump versionCode / versionName from run_number
+        run: |
+          GRADLE=src/android/app/build.gradle.kts
+          # Stable base of 1000 so every custom build out-ranks upstream
+          # (upstream versionCode is 49). run_number grows monotonically per
+          # workflow, so each rebuild is a strict upgrade over the previous
+          # one and Android offers in-place update with data preserved.
+          CODE=$((1000 + ${{ github.run_number }}))
+          NAME="1.15.14-custom.${{ github.run_number }}"
+          sed -i -E "s/versionCode = [0-9]+/versionCode = $CODE/" "$GRADLE"
+          sed -i -E "s/versionName = \"[^\"]+\"/versionName = \"$NAME\"/" "$GRADLE"
+          grep -nE 'versionCode|versionName' "$GRADLE" | head -2
+          echo "APP_VERSION_CODE=$CODE" >> "$GITHUB_ENV"
+          echo "APP_VERSION_NAME=$NAME" >> "$GITHUB_ENV"
+
+      - name: Restore fixed signing keystore
+        env:
+          CUSTOM_KEYSTORE_B64: ${{ secrets.CUSTOM_KEYSTORE_B64 }}
+          CUSTOM_KEYSTORE_PASSWORD: ${{ secrets.CUSTOM_KEYSTORE_PASSWORD }}
+          CUSTOM_KEY_ALIAS: ${{ secrets.CUSTOM_KEY_ALIAS }}
+          CUSTOM_KEY_PASSWORD: ${{ secrets.CUSTOM_KEY_PASSWORD }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          echo "$CUSTOM_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/keys/custom.keystore"
+          chmod 600 "$RUNNER_TEMP/keys/custom.keystore"
+          {
+            echo "CUSTOM_KEYSTORE_FILE=$RUNNER_TEMP/keys/custom.keystore"
+            echo "CUSTOM_STORE_PASS=$CUSTOM_KEYSTORE_PASSWORD"
+            echo "CUSTOM_KEY_ALIAS=$CUSTOM_KEY_ALIAS"
+            echo "CUSTOM_KEY_PASS=$CUSTOM_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -28,7 +60,11 @@ jobs:
         run: |
           cp app/provider-customization.properties.example app/provider-customization.properties
           chmod +x gradlew
-          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace \
+            -Pminis.custom.keystore="$CUSTOM_KEYSTORE_FILE" \
+            -Pminis.custom.storePass="$CUSTOM_STORE_PASS" \
+            -Pminis.custom.keyAlias="$CUSTOM_KEY_ALIAS" \
+            -Pminis.custom.keyPass="$CUSTOM_KEY_PASS"
 
       - name: Show outputs
         run: find src/android/app/build/outputs -name '*.apk' -printf '%p %s\n'
@@ -45,12 +81,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          TAG="custom-$(date +%Y%m%d-%H%M%S)"
+          TAG="v${APP_VERSION_NAME}"
           APK=$(find src/android/app/build/outputs/apk -name '*.apk' | head -1)
           cp "$APK" /tmp/minis-custom.apk
           gh release create "$TAG" /tmp/minis-custom.apk \
-            --title "Minis 1.15.14 custom ($TAG)" \
-            --notes "Build from ${GITHUB_REF_NAME} @ ${GITHUB_SHA:0:7}. Prebuilt proot/rootfs/rclone + bundled skills, toolchain, plugins." \
+            --title "Minis ${APP_VERSION_NAME} (code ${APP_VERSION_CODE})" \
+            --notes "Build from ${GITHUB_REF_NAME} @ ${GITHUB_SHA:0:7}. Signed with the fixed custom keystore — installs in place over previous custom builds, data preserved." \
             --prerelease
           echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
 

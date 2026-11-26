@@ -128,7 +128,21 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("debug")
+            // Release is normally debug-signed (upstream's default). CI
+            // overrides it with a fixed keystore passed via -P so that every
+            // custom build shares one signature and Android offers in-place
+            // upgrades with data preserved instead of requiring uninstall.
+            val ksFile = providers.gradleProperty("minis.custom.keystore").orNull
+            signingConfig = if (ksFile != null) {
+                signingConfigs.create("customRelease").apply {
+                    storeFile = file(ksFile)
+                    storePassword = providers.gradleProperty("minis.custom.storePass").orNull
+                    keyAlias = providers.gradleProperty("minis.custom.keyAlias").orNull
+                    keyPassword = providers.gradleProperty("minis.custom.keyPass").orNull
+                }
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 
