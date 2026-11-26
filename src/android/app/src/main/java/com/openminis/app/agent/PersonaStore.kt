@@ -66,6 +66,13 @@ object PersonaStore {
     const val SOULS_SUBDIR = "souls"
     private const val INDEX_FILE = "index.json"
 
+    /** [T-bundled-personas] APK asset folder holding personas seeded on first launch. */
+    private const val ASSET_DIR = "bundled_personas"
+
+    /** Marker written after the bundled-persona seed runs, so a deleted
+     *  bundled persona is never resurrected on the next launch. */
+    private const val MARKER_FILE = ".bundled_personas_seeded"
+
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -172,6 +179,67 @@ object PersonaStore {
             val order = listOf(DEFAULT_PERSONA_ID) + onDisk.filter { it != DEFAULT_PERSONA_ID }
             writeIndex(context, PersonaIndex(order = order))
         }
+        seedBundledPersonas(context)
+    }
+
+    /**
+     * [T-bundled-personas] Seed the personas shipped inside the APK.
+     *
+     * Any `assets/bundled_personas/<id>.md` is copied to `souls/<id>.md` and
+     * appended to the index on first launch after install/upgrade — the same
+     * build-time mechanism `bundled_skills` uses. No Kotlin string editing:
+     * drop a file into `src/android/app/src/main/assets/bundled_personas/` and
+     * rebuild.
+     *
+     * Runs ONCE per install, guarded by a marker file, so deleting a bundled
+     * persona in Settings is permanent — it is not resurrected on the next
+     * launch. A bundled id that already has a file on disk (user edit, restore
+     * from backup) is never overwritten.
+     */
+    private fun seedBundledPersonas(context: Context) {
+        val dir = soulsDir(context)
+        val marker = File(dir, MARKER_FILE)
+        if (marker.isFile) return
+        val entries = runCatching { context.assets.list(ASSET_DIR)?.toList().orEmpty() }
+            .getOrDefault(emptyList())
+        if (entries.isEmpty()) {
+            // Nothing bundled — mark done so we do not scan assets every launch.
+            runCatching { dir.mkdirs(); marker.writeText("1") }
+            return
+        }
+        val idx = readIndex(context)
+        val order = idx.order.toMutableList()
+        var changed = false
+        for (entry in entries) {
+            if (!entry.endsWith(".md")) continue
+            val id = sanitizeId(entry.removeSuffix(".md"))
+            if (id.isEmpty() || id == DEFAULT_PERSONA_ID) continue
+            val target = personaFile(context, id)
+            if (!target.isFile) {
+                val text = runCatching {
+                    context.assets.open("$ASSET_DIR/$entry").bufferedReader().use { it.readText() }
+                }.getOrNull()
+                if (text.isNullOrBlank()) {
+                    AppLogger.warning(TAG, "bundled persona '$entry' unreadable — skipped")
+                    continue
+                }
+                val ok = runCatching {
+                    target.parentFile?.mkdirs()
+                    target.writeText(text)
+                }.isSuccess
+                if (!ok) {
+                    AppLogger.warning(TAG, "bundled persona '$id' write failed")
+                    continue
+                }
+            }
+            if (id !in order) {
+                order.add(id)
+                changed = true
+            }
+        }
+        if (changed) writeIndex(context, idx.copy(order = order))
+        runCatching { dir.mkdirs(); marker.writeText("1") }
+            .onFailure { AppLogger.warning(TAG, "persona seed marker write failed: ${it.message}") }
     }
 
     /**
