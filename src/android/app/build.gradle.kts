@@ -191,7 +191,12 @@ android {
     }
 
     androidResources {
-        noCompress += listOf("tar.gz", "proot-aarch64")
+        // Already-compressed payloads (toolchain archives, jars, zips) must be
+        // stored as-is: re-deflating them wastes build time and makes the APK
+        // marginally bigger because deflate cannot shrink compressed data.
+        noCompress += listOf(
+            "tar.gz", "proot-aarch64", "tgz", "targz", "jar", "zip",
+        )
     }
 
     testOptions {

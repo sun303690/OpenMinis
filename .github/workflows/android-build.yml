@@ -68,6 +68,38 @@ jobs:
             -Pminis.custom.keyAlias="$CUSTOM_KEY_ALIAS" \
             -Pminis.custom.keyPass="$CUSTOM_KEY_PASS"
 
+      - name: Recompress DEX and re-sign APK (zopfli)
+        run: |
+          set -euo pipefail
+          APK=src/android/app/build/outputs/apk/github/release/app-github-release.apk
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          BEFORE=$(stat -c%s "$APK")
+          echo "before: $BEFORE bytes"
+
+          python3 -m pip install --quiet zopfli 2>/dev/null \
+            || python3 -m pip install --quiet --break-system-packages zopfli
+
+          # Only deflate streams that actually gain: DEX, resources.arsc and
+          # text assets. Already-compressed archives (tgz/jar/zip/so/png) are
+          # copied byte-for-byte, which keeps this step at a few minutes.
+          python3 .github/scripts/apk_recompress.py "$APK" -o "$RUNNER_TEMP/recompressed.apk" \
+            --iterations 8 --jobs 4 | tee "$RUNNER_TEMP/recompress.log"
+
+          # Recompressing rewrites the zip, so alignment and the signature are
+          # gone: re-align, then re-sign with the same fixed keystore.
+          "$BT/zipalign" -f -p 4 "$RUNNER_TEMP/recompressed.apk" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" sign \
+            --ks "$CUSTOM_KEYSTORE_FILE" \
+            --ks-pass "pass:$CUSTOM_STORE_PASS" \
+            --key-pass "pass:$CUSTOM_KEY_PASS" \
+            --ks-key-alias "$CUSTOM_KEY_ALIAS" \
+            "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" verify --verbose "$RUNNER_TEMP/aligned.apk" | head -6
+
+          cp "$RUNNER_TEMP/aligned.apk" "$APK"
+          AFTER=$(stat -c%s "$APK")
+          echo "after:  $AFTER bytes ($(( (BEFORE-AFTER)/1024 )) KiB saved, $(( 100*(BEFORE-AFTER)/BEFORE ))%)"
+
       - name: Show outputs
         run: find src/android/app/build/outputs -name '*.apk' -printf '%p %s\n'
 
