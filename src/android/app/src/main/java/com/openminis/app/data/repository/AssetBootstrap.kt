@@ -43,7 +43,11 @@ object AssetBootstrap {
     private data class Target(val asset: String, val dest: File, val asZip: Boolean = false)
 
     private fun extract(context: Context, t: Target) {
-        val marker = File(t.dest.parentFile, ".${t.dest.name}.extracted")
+        // v2: the toolchain payload gained bin/ wrappers (apktool/cfr/dex2jar)
+        // and jdk17 shims. Bumping the marker suffix re-runs the (idempotent,
+        // overwrite-safe) copy once for devices that already extracted v1.
+        val markerSuffix = if (t.asset == "toolchain") ".extracted.v2" else ".extracted"
+        val marker = File(t.dest.parentFile, ".${t.dest.name}$markerSuffix")
         if (marker.exists() && t.dest.exists()) return
         if (runCatching { context.assets.list(t.asset)?.isNotEmpty() }.getOrNull() == false) return
 
@@ -65,6 +69,7 @@ object AssetBootstrap {
                 Log.w(TAG, "toolchain archive extraction incomplete; marker not written")
                 return
             }
+            installJdkShims(t.dest)
         }
         marker.writeText("ok")
         Log.i(TAG, "extracted ${t.asset} -> ${t.dest}")
@@ -110,8 +115,54 @@ object AssetBootstrap {
         }.onFailure { Log.w(TAG, "copy $assetPath skipped: ${it.message}") }
     }
 
-    private fun unzipTo(input: InputStream, dest: File) {
-        java.util.zip.ZipInputStream(input.buffered()).use { zip ->
+    /**
+     * [T-toolchain-jdk-shims] The NDK-built JDK17 in `assets/toolchain/jdk17`
+     * links against `libandroid-shmem.so` (libjvm) and `libandroid-spawn.so`
+     * (jspawnhelper), both shipped in `assets/toolchain/shims/` rather than
+     * inside the archive. Copy them next to the JDK's libs so its RUNPATH
+     * (`$ORIGIN/../lib`) resolves them, and also into `jdk17/bin` for the
+     * launcher. Without this `java -version` dies with
+     * `library "libandroid-shmem.so" not found`.
+     *
+     * Idempotent: overwrites only when the source is newer or the target is
+     * missing, so a re-run each launch is cheap.
+     */
+    private fun installJdkShims(toolchainDir: File) {
+        val shimsDir = File(toolchainDir, "shims")
+        val jdkLib = File(toolchainDir, "jdk17/lib")
+        val jdkBin = File(toolchainDir, "jdk17/bin")
+        if (!shimsDir.isDirectory) {
+            Log.w(TAG, "toolchain/shims missing — JDK shims not installed")
+            return
+        }
+        val shimFiles = shimsDir.listFiles { f -> f.isFile && f.name.endsWith(".so") }.orEmpty()
+        if (shimFiles.isEmpty()) return
+        for (dir in listOf(jdkLib, jdkBin)) {
+            if (!dir.isDirectory) continue
+            for (shim in shimFiles) {
+                val target = File(dir, shim.name)
+                if (target.isFile && target.length() == shim.length()) continue
+                runCatching { shim.copyTo(target, overwrite = true) }
+                    .onFailure { Log.w(TAG, "shim ${shim.name} -> ${dir.name} failed: ${it.message}") }
+            }
+        }
+        Log.i(TAG, "JDK shims installed into jdk17/lib + jdk17/bin (${shimFiles.size} .so)")
+        // The wrapper scripts under toolchain/bin (apktool / cfr / dex2jar /
+        // apk2java) are plain asset copies — CopyTo does not preserve the tar
+        // mode, so mark them executable here or PATH lookups fail with
+        // "Permission denied". jdk17/bin/java already carries its exec bit
+        // from the tar reader.
+        val binDir = File(toolchainDir, "bin")
+        if (binDir.isDirectory) {
+            var n = 0
+            binDir.listFiles()?.forEach { f ->
+                if (f.isFile && f.setExecutable(true, false)) n++
+            }
+            if (n > 0) Log.i(TAG, "chmod +x toolchain/bin ($n script(s))")
+        }
+    }
+
+    private fun unzipTo(input: InputStream, dest: File) {        java.util.zip.ZipInputStream(input.buffered()).use { zip ->
             val root = dest.canonicalPath
             var entry = zip.nextEntry
             while (entry != null) {

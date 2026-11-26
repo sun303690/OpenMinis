@@ -1,0 +1,7 @@
+#!/bin/sh
+# dex2jar — convert classes*.dex to a .jar (then feed it to cfr/jadx).
+#   dex2jar classes.dex -o classes.jar
+JAVA=java
+
+LIBDIR=/var/minis/toolchain/jars/d2j
+exec "$JAVA" -Xmx2g -cp "$LIBDIR/*" com.googlecode.dex2jar.tools.Dex2jarCmd "$@"

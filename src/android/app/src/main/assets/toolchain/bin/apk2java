@@ -1,0 +1,52 @@
+#!/bin/sh
+# apk2java — one command: APK -> smali + Java sources.
+#   apk2java target.apk [outdir]
+# Produces:
+#   outdir/smali/   apktool output (smali, res, AndroidManifest.xml)
+#   outdir/java/    cfr output (readable Java)
+set -e
+TC=/var/minis/toolchain
+JAVA=java
+
+APK="$1"
+if [ -z "$APK" ] || [ ! -f "$APK" ]; then
+    echo "usage: apk2java <file.apk> [outdir]" >&2
+    exit 2
+fi
+
+# Resolve to an absolute path: we cd into a scratch dir while converting dex.
+case "$APK" in
+    /*) APKABS="$APK" ;;
+    *)  APKABS="$(pwd)/$APK" ;;
+esac
+OUT="${2:-${APK%.apk}_src}"
+mkdir -p "$OUT"
+
+echo "[1/3] apktool decode -> $OUT/smali"
+"$JAVA" -Xmx2g -jar "$TC/jars/apktool.jar" d -f -o "$OUT/smali" "$APKABS" >/dev/null
+
+echo "[2/3] dex -> jar"
+TMP="$OUT/.dex"
+rm -rf "$TMP"
+mkdir -p "$TMP"
+(
+    cd "$TMP" || exit 1
+    unzip -oq "$APKABS" 'classes*.dex' 2>/dev/null || true
+    for d in classes*.dex; do
+        [ -f "$d" ] || continue
+        "$JAVA" -Xmx2g -cp "$TC/jars/d2j/*" \
+            com.googlecode.dex2jar.tools.Dex2jarCmd "$d" -o "${d%.dex}.jar" >/dev/null
+    done
+)
+
+echo "[3/3] jar -> java"
+mkdir -p "$OUT/java"
+for j in "$TMP"/*.jar; do
+    [ -f "$j" ] || continue
+    "$JAVA" -Xmx2g -jar "$TC/jars/cfr.jar" "$j" --outputdir "$OUT/java" >/dev/null 2>&1 || true
+done
+rm -rf "$TMP"
+
+echo "done:"
+echo "  smali : $OUT/smali"
+echo "  java  : $OUT/java"

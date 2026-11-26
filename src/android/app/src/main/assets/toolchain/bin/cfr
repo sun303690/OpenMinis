@@ -1,0 +1,6 @@
+#!/bin/sh
+# cfr — Java decompiler.  cfr classes.jar --outputdir src
+JAR=/var/minis/toolchain/jars/cfr.jar
+JAVA=java
+
+exec "$JAVA" -Xmx2g -jar "$JAR" "$@"

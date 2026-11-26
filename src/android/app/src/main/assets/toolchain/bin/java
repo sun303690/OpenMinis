@@ -1,0 +1,23 @@
+#!/bin/sh
+# java — wrapper around the bundled Android-NDK JDK17.
+# The launcher's RUNPATH covers $ORIGIN and $ORIGIN/../lib, but libjvm.so's
+# RUNPATH is hard-coded to Termux paths that don't exist in this sandbox, so
+# its dependency libandroid-shmem.so is only found via LD_LIBRARY_PATH. Set it
+# here once so every JVM-based tool (apktool / cfr / dex2jar / d8) inherits it.
+TC=/var/minis/toolchain
+REAL="$TC/jdk17/bin/java"
+
+if [ ! -x "$REAL" ]; then
+    # No bundled JDK (extraction failed / older install) — fall through to a
+    # JDK the user installed with apk, skipping this wrapper entirely.
+    for p in /usr/bin/java /usr/local/bin/java; do
+        [ -x "$p" ] && exec "$p" "$@"
+    done
+    echo "java: no JDK found (bundled jdk17 missing and no system java)" >&2
+    exit 127
+fi
+
+JAVA_HOME="$TC/jdk17"
+LD_LIBRARY_PATH="$TC/jdk17/lib:$TC/jdk17/lib/server:$TC/shims${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export JAVA_HOME LD_LIBRARY_PATH
+exec "$REAL" "$@"

@@ -151,8 +151,22 @@ object PRootKernel {
         if (loaderPath.exists()) prootLoaderPath = loaderPath.absolutePath
         if (loader32Path.exists()) prootLoader32Path = loader32Path.absolutePath
 
-        // Set default PATH for Alpine Linux
-        customEnvironment.putIfAbsent("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bin")
+        // Set default PATH for Alpine Linux. `/var/minis/toolchain/jdk17/bin`
+        // is the Android-NDK JDK17 shipped in assets/toolchain/ (extracted by
+        // AssetBootstrap on first launch); `/var/minis/toolchain/bin` holds the
+        // wrapper scripts (apktool / dex2jar / cfr) that drive it. Appended
+        // after the system paths so an `apk add openjdk21-jdk` still wins if
+        // the user installs their own JDK.
+        customEnvironment.putIfAbsent(
+            "PATH",
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bin" +
+                ":/var/minis/toolchain/bin:/var/minis/toolchain/jdk17/bin",
+        )
+        // The bundled JDK's libjvm.so links against libandroid-shmem.so from
+        // assets/toolchain/shims/ (copied into jdk17/lib by AssetBootstrap).
+        // Keeping the shims dir on the loader path too makes a partially
+        // extracted toolchain still loadable.
+        customEnvironment.putIfAbsent("JAVA_HOME", "/var/minis/toolchain/jdk17")
         customEnvironment.putIfAbsent("HOME", "/root")
 
         // URL interception: seed $BROWSER directly into every process envp

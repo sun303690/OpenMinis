@@ -1,0 +1,9 @@
+#!/bin/sh
+# apktool — decompile / rebuild APKs with the bundled JDK17.
+#   apktool d target.apk -o out     解出 smali + res + AndroidManifest.xml
+#   apktool b out -o new.apk        回编
+#   apktool --version
+JAR=/var/minis/toolchain/jars/apktool.jar
+JAVA=java
+
+exec "$JAVA" -Xmx2g -jar "$JAR" "$@"
