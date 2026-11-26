@@ -74,7 +74,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: minis-1.15.14-release
-          path: src/android/app/build/outputs/apk/**/*.apk
+          path: src/android/app/build/outputs/apk/github/release/app-github-release.apk
           if-no-files-found: error
 
       - name: Publish GitHub Release
@@ -84,7 +84,7 @@ jobs:
         run: |
           set -e
           TAG="v${APP_VERSION_NAME}"
-          APK=$(find src/android/app/build/outputs/apk -name '*.apk' | head -1)
+          APK=src/android/app/build/outputs/apk/github/release/app-github-release.apk
           cp "$APK" /tmp/minis-custom.apk
           gh release create "$TAG" /tmp/minis-custom.apk \
             --title "Minis ${APP_VERSION_NAME} (code ${APP_VERSION_CODE})" \
